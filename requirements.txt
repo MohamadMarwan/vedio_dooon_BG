@@ -7,3 +7,6 @@ python-bidi
 opencv-python
 numpy
 ffmpeg-python
+gunicorn
+gTTS
+werkzeug
