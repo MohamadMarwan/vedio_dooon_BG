@@ -1,9 +1,7 @@
 # ==============================================================================
-#     أداة الفيديو الإخباري كخدمة ويب (API) - إصدار 9.0 (شامل)
-#     - دمج الكود الجديد مع بنية Flask API.
-#     - إضافة التعامل مع رفع ملفات الفيديو والصوت.
-#     - إضافة ميزة تحويل النص إلى كلام (TTS) باللغة العربية.
-#     - تحسينات شاملة على منطق دمج الصوتيات والفيديو.
+#     أداة الفيديو الإخباري كخدمة ويب (API) - إصدار 9.1 (مُصحح)
+#     - إصلاح خطأ "I/O operation on closed file" عن طريق حفظ الملفات
+#       في الطلب الرئيسي قبل بدء المعالجة في الخلفية.
 # ==============================================================================
 import os
 import random
@@ -22,12 +20,11 @@ import numpy as np
 import ffmpeg
 import requests
 from bs4 import BeautifulSoup
-from gtts import gTTS # *** إضافة جديدة لتحويل النص إلى كلام ***
+from gtts import gTTS
 
 # ==============================================================================
 #                                   الإعدادات
 # ==============================================================================
-# --- إعدادات Flask ---
 UPLOAD_FOLDER = 'temp_uploads'
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
@@ -35,17 +32,14 @@ if not os.path.exists(UPLOAD_FOLDER):
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
 
-# --- إعدادات تليجرام (سيتم قراءتها من متغيرات البيئة) ---
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', 'YOUR_FALLBACK_TOKEN')
 TELEGRAM_CHANNEL_ID = os.environ.get('TELEGRAM_CHANNEL_ID', 'YOUR_FALLBACK_ID')
 
-# --- إعدادات الملفات (يجب أن تكون موجودة في نفس المجلد) ---
 FONT_FILE = "Amiri-Bold.ttf"
 LOGO_FILE = "logo.png"
 DEFAULT_SOUND_FILE = "news_alert.mp3"
 DEFAULT_MUSIC_FILE = "background_music.mp3"
 
-# --- إعدادات التوقيت والتصميم (من الكود الجديد) ---
 SECONDS_PER_PAGE = 8
 OUTRO_DURATION_SECONDS = 6.5
 FPS = 30
@@ -55,9 +49,8 @@ MAX_LINES_PER_PAGE = 3
 TEXT_COLOR = "#FFFFFF"
 SHADOW_COLOR = "#000000"
 TEXT_PLATE_COLOR = (0, 0, 0, 160)
-BACKGROUND_MUSIC_VOLUME = 0.15 # سيتم استخدامه إذا لم يتم رفع ملف صوتي
+BACKGROUND_MUSIC_VOLUME = 0.15
 
-# --- قوالب الأخبار والأبعاد ---
 NEWS_TEMPLATES = {
     "1": { "name": "دليلك في سوريا", "hashtag": "#عاجل #سوريا #سوريا_عاجل #syria", "color": (211, 47, 47) },
     "3": { "name": "دليلك في الأخبار", "hashtag": "#عاجل #أخبار #دليلك", "color": (200, 30, 30) },
@@ -72,10 +65,7 @@ DETAILS_TEXT = "الـتـفـاصـيـل:"
 FOOTER_TEXT = "تابعنا عبر موقع دليلك نيوز الإخباري"
 # ===================================================================
 
-# ( ... هنا يتم نسخ جميع الدوال المساعدة من الكود الجديد ... )
-#  process_text_for_image, wrap_text_to_pages, draw_text_with_shadow,
-#  fit_image_to_box, render_design, scrape_article_page, etc.
-
+# ( ... جميع الدوال المساعدة create_video, render_design, etc. تبقى كما هي ... )
 def process_text_for_image(text): return get_display(arabic_reshaper.reshape(text))
 def wrap_text_to_pages(text, font, max_width, max_lines_per_page):
     if not text: return [[]]
@@ -127,11 +117,10 @@ def render_design(design_type, draw, W, H, template, lines_to_draw, news_font, l
             line_width = news_font.getbbox(process_text_for_image(line))[2]
             draw_text_with_shadow(draw, ((W - line_width) / 2, text_y_start), line, news_font, TEXT_COLOR, SHADOW_COLOR)
             text_y_start += news_font.getbbox(process_text_for_image(line))[3] + 20
-
 def scrape_article_page(url):
     try:
         headers = {'User-Agent': 'Mozilla/5.0'}; response = requests.get(url, headers=headers, timeout=10); response.raise_for_status()
-        soup = BeautifulSoup(response.content, 'html.parser'); 
+        soup = BeautifulSoup(response.content, 'html.parser');
         title = (soup.find('h1', class_='entry-title') or soup.find('h1')).get_text(strip=True)
         image_url = (soup.find('meta', property='og:image')).get('content')
         if title and image_url: return {'title': title, 'image_url': image_url}
@@ -142,8 +131,6 @@ def download_image(url, save_path):
         with open(save_path, 'wb') as f: f.write(response.content)
         return save_path
     except Exception: return None
-    
-# *** دالة جديدة لإنشاء الصوت من النص ***
 def generate_tts_audio(text, filepath):
     try:
         tts = gTTS(text=text, lang='ar', slow=False)
@@ -153,37 +140,26 @@ def generate_tts_audio(text, filepath):
     except Exception as e:
         print(f"!! فشل في إنشاء الصوت من النص: {e}")
         return None
-
 def create_video(params):
-    # تفكيك المتغيرات لسهولة القراءة
     design_type = params['design_type']; news_title = params['text']
     template = params['template']; background_image_path = params['image_path']
     W, H = params['dimensions']; tts_enabled = params['tts_enabled']
     intro_path = params['intro_path']; outro_path = params['outro_path']
     music_path = params['music_path']
-    
     unique_id = random.randint(1000, 9999)
-    temp_files = [] # قائمة لتتبع كل الملفات المؤقتة
-
+    temp_files = []
     try:
         font_size_base = int(W / 12)
         news_font = ImageFont.truetype(FONT_FILE, font_size_base if len(news_title) < 50 else font_size_base - 20)
-        
         if background_image_path:
             base_image = fit_image_to_box(Image.open(background_image_path).convert("RGB"), W, H)
         else:
             base_image = Image.open(LOGO_FILE).convert("RGB").resize((W,H)).filter(ImageFilter.GaussianBlur(15))
-            
         logo_img = Image.open(LOGO_FILE).convert("RGBA") if os.path.exists(LOGO_FILE) else None
-
         text_pages = wrap_text_to_pages(news_title, news_font, max_width=W-120, max_lines_per_page=MAX_LINES_PER_PAGE)
         num_pages = len(text_pages)
-
-        # --- إنشاء الفيديو الصامت ---
         silent_video_path = f"silent_{unique_id}.mp4"; temp_files.append(silent_video_path)
         video_writer = cv2.VideoWriter(silent_video_path, cv2.VideoWriter_fourcc(*'mp4v'), FPS, (W, H))
-        
-        # ... (نفس منطق تصيير الفريمات من الكود الأصلي) ...
         for page_index, original_page_lines in enumerate(text_pages):
             page_text = " ".join(original_page_lines); words_on_page = page_text.split()
             for i in range(int(SECONDS_PER_PAGE * FPS)):
@@ -197,8 +173,6 @@ def create_video(params):
                 lines_to_draw = wrap_text_to_pages(" ".join(words_on_page[:words_to_show]), news_font, W-120, MAX_LINES_PER_PAGE)[0]
                 render_design(design_type, draw, W, H, template, lines_to_draw, news_font, logo_img)
                 video_writer.write(cv2.cvtColor(np.array(frame_bg), cv2.COLOR_RGB2BGR))
-        
-        # ... (نفس منطق الخاتمة من الكود الأصلي) ...
         outro_font = ImageFont.truetype(FONT_FILE, int(W / 18))
         for i in range(int(OUTRO_DURATION_SECONDS * FPS)):
             image = Image.new('RGB', (W, H), (10, 10, 10)); draw = ImageDraw.Draw(image, 'RGBA')
@@ -206,30 +180,19 @@ def create_video(params):
             draw_text_with_shadow(draw, ((W - text_width) / 2, H // 2), FOOTER_TEXT, outro_font, TEXT_COLOR, SHADOW_COLOR)
             video_writer.write(cv2.cvtColor(np.array(image.convert("RGB")), cv2.COLOR_RGB2BGR))
         video_writer.release()
-
-        # --- مرحلة الصوت (معدلة بالكامل) ---
         main_video_stream = ffmpeg.input(silent_video_path)
         audio_inputs = []
-        
-        # 1. صوت التنبيه الافتراضي
         if os.path.exists(DEFAULT_SOUND_FILE):
              audio_inputs.append(ffmpeg.input(DEFAULT_SOUND_FILE))
-
-        # 2. صوت قراءة النص (TTS)
         if tts_enabled:
             tts_path = f"tts_{unique_id}.mp3"; temp_files.append(tts_path)
             if generate_tts_audio(news_title, tts_path):
-                # تأخير صوت القراءة ليبدأ بعد صوت التنبيه
                 audio_inputs.append(ffmpeg.input(tts_path).filter('adelay', '1000|1000'))
-        
-        # 3. موسيقى الخلفية (المرفوعة أو الافتراضية)
         final_music_path = music_path if music_path and os.path.exists(music_path) else DEFAULT_MUSIC_FILE
         if os.path.exists(final_music_path):
             total_duration = (num_pages * SECONDS_PER_PAGE) + OUTRO_DURATION_SECONDS
             music_stream = ffmpeg.input(final_music_path, stream_loop=-1, t=total_duration).filter('volume', BACKGROUND_MUSIC_VOLUME)
             audio_inputs.append(music_stream)
-
-        # دمج الصوت مع الفيديو الصامت
         generated_video_path = f"generated_{unique_id}.mp4"; temp_files.append(generated_video_path)
         if audio_inputs:
             mixed_audio = ffmpeg.filter(audio_inputs, 'amix', duration='first', inputs=len(audio_inputs))
@@ -238,13 +201,10 @@ def create_video(params):
         else:
             (ffmpeg.output(main_video_stream.video, generated_video_path, vcodec='copy')
              .run(capture_stdout=True, capture_stderr=True))
-
-        # --- مرحلة دمج المقدمة والخاتمة ---
         videos_to_concat = []
         if intro_path: videos_to_concat.append(ffmpeg.input(intro_path))
         videos_to_concat.append(ffmpeg.input(generated_video_path))
         if outro_path: videos_to_concat.append(ffmpeg.input(outro_path))
-
         final_video_path = f"final_{unique_id}.mp4"; temp_files.append(final_video_path)
         if len(videos_to_concat) > 1:
             print("🔗 دمج المقدمة/الخاتمة...")
@@ -254,22 +214,16 @@ def create_video(params):
              .output(final_video_path, vcodec='libx264', acodec='aac', crf=28, preset='fast')
              .overwrite_output().run(capture_stdout=True, capture_stderr=True))
         else:
-            # إذا لم يكن هناك دمج، فقط أعد تسمية الملف
             os.rename(generated_video_path, final_video_path)
-
-        # --- إنشاء الصورة المصغرة النهائية ---
         thumbnail_path = f"thumb_{unique_id}.jpg"; temp_files.append(thumbnail_path)
         thumb_image = base_image.copy()
-        render_design(design_type, ImageDraw.Draw(thumb_image, 'RGBA'), W, H, template, text_pages[0], news_font, logo_img)
+        render_design(ImageDraw.Draw(thumb_image, 'RGBA'), W, H, template, text_pages[0], news_font, logo_img)
         thumb_image.convert('RGB').save(thumbnail_path, quality=85)
-
         return final_video_path, thumbnail_path, temp_files
-
     except Exception as e:
         print(f"!! خطأ فادح أثناء إنشاء الفيديو: {e}")
         traceback.print_exc()
-        return None, None, temp_files # إرجاع الملفات المؤقتة للتنظيف
-
+        return None, None, temp_files
 def send_video_to_telegram(video_path, thumb_path, caption, hashtag):
     try:
         url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendVideo"
@@ -278,20 +232,17 @@ def send_video_to_telegram(video_path, thumb_path, caption, hashtag):
             files = {'video': vf, 'thumb': tf}
             data = {'chat_id': TELEGRAM_CHANNEL_ID, 'caption': full_caption, 'parse_mode': 'HTML', 'supports_streaming': True}
             response = requests.post(url, files=files, data=data, timeout=1800)
-            if response.status_code == 200:
-                print("✅ تم النشر بنجاح!")
-            else:
-                print(f"!! فشل النشر: {response.status_code} - {response.text}")
-    except Exception as e:
-        print(f"!! خطأ في الإرسال إلى تليجرام: {e}")
+            if response.status_code == 200: print("✅ تم النشر بنجاح!")
+            else: print(f"!! فشل النشر: {response.status_code} - {response.text}")
+    except Exception as e: print(f"!! خطأ في الإرسال إلى تليجرام: {e}")
 
 # ==============================================================================
-#                          المنطق الرئيسي للـ API
+#                          المنطق الرئيسي للـ API (مُعدل)
 # ==============================================================================
-def process_video_request(form_data, files_data):
-    temp_files_to_clean = []
+def process_video_request(form_data, saved_file_paths):
+    # ** التعديل: الملفات المحفوظة مسبقاً تُضاف الآن إلى قائمة التنظيف
+    temp_files_to_clean = list(saved_file_paths.values())
     try:
-        # --- 1. استخراج البيانات من الطلب ---
         source_url = form_data.get('url')
         manual_text = form_data.get('text')
         template_choice = form_data.get('template', '1')
@@ -301,23 +252,12 @@ def process_video_request(form_data, files_data):
 
         W, H = VIDEO_DIMENSIONS[video_format]['size']
         selected_template = NEWS_TEMPLATES[template_choice]
-
-        # --- 2. حفظ الملفات المرفوعة ---
-        def save_uploaded_file(file_key):
-            if file_key in files_data:
-                file = files_data[file_key]
-                filename = secure_filename(f"{file_key}_{random.randint(1000,9999)}_{file.filename}")
-                path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-                file.save(path)
-                temp_files_to_clean.append(path)
-                return path
-            return None
         
-        intro_path = save_uploaded_file('intro_video')
-        outro_path = save_uploaded_file('outro_video')
-        music_path = save_uploaded_file('music_file')
-
-        # --- 3. تحضير نص وصورة الخبر ---
+        # ** التعديل: الحصول على مسارات الملفات من القاموس المُمرر
+        intro_path = saved_file_paths.get('intro_video')
+        outro_path = saved_file_paths.get('outro_video')
+        music_path = saved_file_paths.get('music_file')
+        
         data = {}
         if source_url:
             article_data = scrape_article_page(source_url)
@@ -332,14 +272,12 @@ def process_video_request(form_data, files_data):
         if not data.get('text'):
             raise ValueError("لا يوجد نص لإنشاء الفيديو.")
 
-        # --- 4. إنشاء الفيديو ---
         params = {**data, 'design_type': design_type, 'template': selected_template, 'dimensions': (W, H), 
                   'tts_enabled': tts_enabled, 'intro_path': intro_path, 'outro_path': outro_path, 'music_path': music_path}
         
         final_video, final_thumb, created_files = create_video(params)
         temp_files_to_clean.extend(created_files)
 
-        # --- 5. النشر ---
         if final_video and final_thumb:
             caption_parts = [data['text']]
             if data.get('url'): caption_parts.extend(["", f"<b>{DETAILS_TEXT}</b> {data['url']}"])
@@ -352,18 +290,35 @@ def process_video_request(form_data, files_data):
         print(f"!! حدث خطأ غير متوقع في معالجة الطلب: {e}")
         traceback.print_exc()
     finally:
-        # --- 6. تنظيف جميع الملفات المؤقتة ---
         print(f"🧹 تنظيف {len(temp_files_to_clean)} ملف مؤقت...")
         for f in temp_files_to_clean:
             if f and os.path.exists(f):
                 try: os.remove(f)
                 except Exception as e: print(f"  - لم يتمكن من حذف {f}: {e}")
 
+# ** التعديل الرئيسي هنا في معالج الطلب **
 @app.route('/create-video', methods=['POST'])
 def handle_create_video():
-    # استخدام thread لتشغيل العملية الطويلة في الخلفية وإرجاع استجابة فورية
-    thread = threading.Thread(target=process_video_request, args=(request.form, request.files))
+    # تحويل بيانات النموذج إلى قاموس عادي
+    form_data = request.form.to_dict()
+    saved_file_paths = {}
+
+    # الخطوة 1: حفظ أي ملفات مرفوعة فوراً في الطلب الرئيسي
+    for key in ['intro_video', 'outro_video', 'music_file']:
+        if key in request.files:
+            file = request.files[key]
+            # التأكد من أن المستخدم رفع ملفاً بالفعل وليس حقلاً فارغاً
+            if file and file.filename:
+                filename = secure_filename(f"{key}_{random.randint(1000,9999)}_{file.filename}")
+                path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+                file.save(path)
+                saved_file_paths[key] = path
+
+    # الخطوة 2: بدء العملية الخلفية وتمرير البيانات والمسارات المحفوظة
+    thread = threading.Thread(target=process_video_request, args=(form_data, saved_file_paths))
     thread.start()
+    
+    # الخطوة 3: إرجاع استجابة فورية
     return jsonify({
         "status": "processing",
         "message": "تم استلام طلبك بنجاح. سيتم إنشاء الفيديو ونشره في الخلفية."
