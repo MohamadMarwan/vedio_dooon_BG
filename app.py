@@ -1,12 +1,11 @@
 # ==============================================================================
-#     أداة الفيديو الإخباري كخدمة ويب (API) - إصدار 9.2 (حل نهائي)
-#     - إعادة هيكلة كاملة لمنطق معالجة الطلبات لضمان عدم تمرير كائنات
-#       الطلب إلى الـ thread الخلفي، مما يحل مشكلة I/O بشكل جذري.
+#     أداة الفيديو الإخباري كخدمة ويب (API) - إصدار 9.3 (النمط المباشر)
+#     - إزالة المعالجة الخلفية (threading) ومعالجة الفيديو مباشرة في الطلب
+#       للتوافق مع سياسة الخطة المجانية في Render.
 # ==============================================================================
 import os
 import random
 import traceback
-import threading
 from flask import Flask, request, jsonify
 from werkzeug.utils import secure_filename
 import time
@@ -22,24 +21,18 @@ import requests
 from bs4 import BeautifulSoup
 from gtts import gTTS
 
-# ==============================================================================
-#                                   الإعدادات
-# ==============================================================================
+# ( ... جميع الإعدادات والدوال المساعدة تبقى كما هي تماماً ... )
 UPLOAD_FOLDER = 'temp_uploads'
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
-
 app = Flask(__name__)
 app.config['UPLOAD_FOLDER'] = UPLOAD_FOLDER
-
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', 'YOUR_FALLBACK_TOKEN')
 TELEGRAM_CHANNEL_ID = os.environ.get('TELEGRAM_CHANNEL_ID', 'YOUR_FALLBACK_ID')
-
 FONT_FILE = "Amiri-Bold.ttf"
 LOGO_FILE = "logo.png"
 DEFAULT_SOUND_FILE = "news_alert.mp3"
 DEFAULT_MUSIC_FILE = "background_music.mp3"
-
 SECONDS_PER_PAGE = 8
 OUTRO_DURATION_SECONDS = 6.5
 FPS = 30
@@ -50,7 +43,6 @@ TEXT_COLOR = "#FFFFFF"
 SHADOW_COLOR = "#000000"
 TEXT_PLATE_COLOR = (0, 0, 0, 160)
 BACKGROUND_MUSIC_VOLUME = 0.15
-
 NEWS_TEMPLATES = {
     "1": { "name": "دليلك في سوريا", "hashtag": "#عاجل #سوريا #سوريا_عاجل #syria", "color": (211, 47, 47) },
     "3": { "name": "دليلك في الأخبار", "hashtag": "#عاجل #أخبار #دليلك", "color": (200, 30, 30) },
@@ -63,9 +55,6 @@ VIDEO_DIMENSIONS = {
 }
 DETAILS_TEXT = "الـتـفـاصـيـل:"
 FOOTER_TEXT = "تابعنا عبر موقع دليلك نيوز الإخباري"
-# ===================================================================
-
-# ( ... جميع الدوال المساعدة create_video, render_design, etc. تبقى كما هي ... )
 def process_text_for_image(text): return get_display(arabic_reshaper.reshape(text))
 def wrap_text_to_pages(text, font, max_width, max_lines_per_page):
     if not text: return [[]]
@@ -236,27 +225,42 @@ def send_video_to_telegram(video_path, thumb_path, caption, hashtag):
             else: print(f"!! فشل النشر: {response.status_code} - {response.text}")
     except Exception as e: print(f"!! خطأ في الإرسال إلى تليجرام: {e}")
 
-# ==============================================================================
-#                      المنطق الرئيسي للـ API (إعادة هيكلة)
-# ==============================================================================
-def process_video_request(payload):
-    # ** التعديل: الدالة الآن تستقبل "حزمة بيانات" بسيطة وليس كائنات الطلب
-    temp_files_to_clean = list(payload.get('saved_file_paths', {}).values())
-    try:
-        source_url = payload.get('url')
-        manual_text = payload.get('text')
-        template_choice = payload.get('template', '1')
-        design_type = payload.get('design', 'classic')
-        video_format = payload.get('video_format', 'reels')
-        tts_enabled = payload.get('tts_enabled', False)
 
+# ==============================================================================
+#                      المنطق الرئيسي للـ API (النمط المباشر)
+# ==============================================================================
+@app.route('/create-video', methods=['POST'])
+def handle_create_video_directly():
+    temp_files_to_clean = []
+    try:
+        # --- الخطوة 1: استخراج البيانات من النموذج ---
+        form_data = request.form
+        source_url = form_data.get('url')
+        manual_text = form_data.get('text')
+        template_choice = form_data.get('template', '1')
+        design_type = form_data.get('design', 'classic')
+        video_format = form_data.get('video_format', 'reels')
+        tts_enabled = form_data.get('tts_enabled') == 'true'
         W, H = VIDEO_DIMENSIONS[video_format]['size']
         selected_template = NEWS_TEMPLATES[template_choice]
+
+        # --- الخطوة 2: حفظ الملفات المرفوعة ---
+        saved_file_paths = {}
+        for key in ['intro_video', 'outro_video', 'music_file']:
+            if key in request.files:
+                file = request.files[key]
+                if file and file.filename:
+                    filename = secure_filename(f"{key}_{random.randint(1000,9999)}_{file.filename}")
+                    path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
+                    file.save(path)
+                    saved_file_paths[key] = path
+                    temp_files_to_clean.append(path)
         
-        intro_path = payload.get('saved_file_paths', {}).get('intro_video')
-        outro_path = payload.get('saved_file_paths', {}).get('outro_video')
-        music_path = payload.get('saved_file_paths', {}).get('music_file')
-        
+        intro_path = saved_file_paths.get('intro_video')
+        outro_path = saved_file_paths.get('outro_video')
+        music_path = saved_file_paths.get('music_file')
+
+        # --- الخطوة 3: تحضير بيانات الخبر ---
         data = {}
         if source_url:
             article_data = scrape_article_page(source_url)
@@ -269,65 +273,38 @@ def process_video_request(payload):
             data = {'text': manual_text, 'image_path': None, 'url': None}
 
         if not data.get('text'):
-            raise ValueError("لا يوجد نص لإنشاء الفيديو.")
+            return jsonify({"status": "error", "message": "لا يوجد نص لإنشاء الفيديو."}), 400
 
+        # --- الخطوة 4: إنشاء الفيديو (العملية الطويلة) ---
         params = {**data, 'design_type': design_type, 'template': selected_template, 'dimensions': (W, H), 
                   'tts_enabled': tts_enabled, 'intro_path': intro_path, 'outro_path': outro_path, 'music_path': music_path}
         
         final_video, final_thumb, created_files = create_video(params)
         temp_files_to_clean.extend(created_files)
 
+        # --- الخطوة 5: النشر ---
         if final_video and final_thumb:
             caption_parts = [data['text']]
             if data.get('url'): caption_parts.extend(["", f"<b>{DETAILS_TEXT}</b> {data['url']}"])
             caption = "\n".join(caption_parts)
             send_video_to_telegram(final_video, final_thumb, caption, selected_template['hashtag'])
+            
+            # --- الخطوة 6: إرجاع رد النجاح ---
+            return jsonify({"status": "success", "message": "تم إنشاء الفيديو ونشره بنجاح!"}), 200
         else:
-            print("❌ فشلت عملية إنشاء الفيديو النهائية.")
+            raise RuntimeError("فشلت عملية إنشاء الفيديو النهائية.")
 
     except Exception as e:
         print(f"!! حدث خطأ غير متوقع في معالجة الطلب: {e}")
         traceback.print_exc()
+        return jsonify({"status": "error", "message": f"حدث خطأ فادح في الخادم: {e}"}), 500
     finally:
+        # --- الخطوة 7: تنظيف جميع الملفات المؤقتة ---
         print(f"🧹 تنظيف {len(temp_files_to_clean)} ملف مؤقت...")
         for f in temp_files_to_clean:
             if f and os.path.exists(f):
                 try: os.remove(f)
                 except Exception as e: print(f"  - لم يتمكن من حذف {f}: {e}")
-
-@app.route('/create-video', methods=['POST'])
-def handle_create_video():
-    # الخطوة 1: إنشاء "حزمة عمل" (payload) تحتوي على بيانات بسيطة
-    payload = {
-        'form_data': request.form.to_dict(),
-        'saved_file_paths': {}
-    }
-
-    # الخطوة 2: حفظ أي ملفات مرفوعة فوراً والحصول على مساراتها
-    for key in ['intro_video', 'outro_video', 'music_file']:
-        if key in request.files:
-            file = request.files[key]
-            if file and file.filename:
-                filename = secure_filename(f"{key}_{random.randint(1000,9999)}_{file.filename}")
-                path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
-                file.save(path)
-                payload['saved_file_paths'][key] = path
-
-    # ** دمج بيانات النموذج مع حزمة العمل الرئيسية **
-    payload.update(payload.pop('form_data'))
-    # تحويل tts_enabled إلى boolean
-    payload['tts_enabled'] = payload.get('tts_enabled') == 'true'
-
-
-    # الخطوة 3: بدء العملية الخلفية وتمرير "حزمة العمل" فقط
-    thread = threading.Thread(target=process_video_request, args=(payload,))
-    thread.start()
-    
-    # الخطوة 4: إرجاع استجابة فورية
-    return jsonify({
-        "status": "processing",
-        "message": "تم استلام طلبك بنجاح. سيتم إنشاء الفيديو ونشره في الخلفية."
-    }), 202
 
 if __name__ == "__main__":
     app.run(host='0.0.0.0', port=5000)
