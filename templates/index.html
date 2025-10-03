@@ -1,0 +1,286 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>لوحة تحكم الفيديو الإخباري</title>
+    <style>
+        body { font-family: 'Tahoma', sans-serif; background-color: #f0f2f5; color: #333; direction: rtl; padding: 15px; margin: 0; }
+        .container { max-width: 850px; margin: auto; background: #fff; padding: 25px; border-radius: 12px; box-shadow: 0 6px 20px rgba(0,0,0,0.08); }
+        h1 { text-align: center; color: #1a73e8; margin-bottom: 25px; font-size: 24px; }
+        fieldset { border: 1px solid #ddd; border-radius: 8px; padding: 15px; margin-bottom: 20px; }
+        legend { font-weight: bold; color: #1a73e8; padding: 0 10px; font-size: 18px; }
+        .form-group { margin-bottom: 15px; }
+        label { display: block; margin-bottom: 6px; font-weight: 600; font-size: 15px; }
+        input[type="text"], input[type="url"], select, textarea { width: 100%; padding: 12px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; transition: border-color 0.3s; font-family: 'Tahoma', sans-serif; }
+        input:focus, select:focus, textarea:focus { border-color: #1a73e8; outline: none; box-shadow: 0 0 5px rgba(26, 115, 232, 0.3); }
+        .input-tabs { display: flex; border-bottom: 2px solid #ddd; margin-bottom: 15px; }
+        .tab-button { padding: 10px 20px; cursor: pointer; border: none; background-color: #f0f2f5; font-size: 16px; border-radius: 6px 6px 0 0; }
+        .tab-button.active { background-color: #fff; border: 2px solid #ddd; border-bottom: 2px solid #fff; position: relative; top: 2px; font-weight: bold; color: #1a73e8;}
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+        .btn { display: block; width: 100%; padding: 15px; font-size: 18px; font-weight: bold; color: #fff; background: linear-gradient(45deg, #28a745, #218838); border: none; border-radius: 6px; cursor: pointer; transition: transform 0.2s, background-color 0.3s; }
+        .btn:hover:not(:disabled) { transform: translateY(-2px); box-shadow: 0 4px 10px rgba(0,0,0,0.15); }
+        .btn:disabled { background: #aaa; cursor: not-allowed; }
+        #status-message { margin-top: 20px; padding: 15px; border-radius: 6px; text-align: center; font-weight: bold; display: none; }
+        .status-success { background-color: #d4edda; color: #155724; border: 1px solid #c3e6cb;}
+        .status-error { background-color: #f8d7da; color: #721c24; border: 1px solid #f5c6cb;}
+        .status-processing { background-color: #cce5ff; color: #004085; border: 1px solid #b8daff;}
+        .file-input-label { background-color: #e9ecef; color: #495057; padding: 10px; border: 1px solid #ced4da; border-radius: 5px; cursor: pointer; text-align: center; display: block; transition: background-color 0.2s; }
+        .file-input-label:hover { background-color: #dde2e6; }
+        input[type="file"] { display: none; }
+        .switch-container { display: flex; align-items: center; justify-content: space-between; background-color: #f8f9fa; padding: 10px; border-radius: 8px; }
+        .switch-label { font-size: 14px; }
+        .switch { position: relative; display: inline-block; width: 60px; height: 34px; }
+        .switch input { opacity: 0; width: 0; height: 0; }
+        .slider { position: absolute; cursor: pointer; top: 0; left: 0; right: 0; bottom: 0; background-color: #ccc; transition: .4s; border-radius: 34px; }
+        .slider:before { position: absolute; content: ""; height: 26px; width: 26px; left: 4px; bottom: 4px; background-color: white; transition: .4s; border-radius: 50%; }
+        input:checked + .slider { background-color: #2196F3; }
+        input:checked + .slider:before { transform: translateX(26px); }
+        #preview-area { border: 2px dashed #ccc; border-radius: 8px; padding: 15px; margin-top: 15px; display: none; text-align: center; }
+        #preview-area.loading { display: flex; align-items: center; justify-content: center; min-height: 100px; }
+        #preview-content { display: flex; align-items: flex-start; gap: 15px; text-align: right; }
+        #preview-image { max-width: 150px; height: auto; border-radius: 6px; border: 1px solid #eee; }
+        #preview-title { font-size: 16px; font-weight: bold; color: #333; margin: 0; }
+        .loader { border: 5px solid #f3f3f3; border-radius: 50%; border-top: 5px solid #3498db; width: 40px; height: 40px; animation: spin 1s linear infinite; }
+        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>لوحة تحكم الفيديو الإخباري المتكاملة</h1>
+        
+        <form id="video-form" enctype="multipart/form-data">
+    
+            <fieldset>
+                <legend>1. المحتوى الأساسي</legend>
+                <div class="form-group">
+                    <div class="input-tabs">
+                        <button type="button" class="tab-button active" onclick="showTab('url-input')">إدخال رابط</button>
+                        <button type="button" class="tab-button" onclick="showTab('text-input')">إدخال نص يدوي</button>
+                    </div>
+                    
+                    <div id="url-input" class="tab-content active">
+                        <label for="article-url">رابط المقال (الصق الرابط وانتظر المعاينة):</label>
+                        <input type="url" id="article-url" name="url" placeholder="https://example.com/news/story" onchange="fetchPreview()">
+                        <div id="preview-area">
+                             <div id="preview-loader" class="loader"></div>
+                             <div id="preview-content" style="display: none;">
+                                 <img id="preview-image" src="" alt="صورة الخبر">
+                                 <div>
+                                     <p style="font-size: 14px; color: #555; margin: 0 0 5px 0;">معاينة المحتوى:</p>
+                                     <h3 id="preview-title"></h3>
+                                 </div>
+                             </div>
+                             <p id="preview-error" style="color: red; display: none;"></p>
+                        </div>
+                    </div>
+                    
+                    <div id="text-input" class="tab-content">
+                        <label for="manual-text">عنوان الخبر (يدوياً):</label>
+                        <textarea id="manual-text" name="text" rows="3" placeholder="اكتب هنا عنوان الخبر الذي سيظهر في الفيديو"></textarea>
+                        <div class="form-group" style="margin-top: 15px;">
+                            <label for="manual-image-input">رفع صورة خلفية (اختياري):</label>
+                            <label for="manual-image-input" class="file-input-label" id="manual-image-label">اختر صورة...</label>
+                            <input type="file" id="manual-image-input" name="background_image" accept="image/*" onchange="updateLabel('manual-image-input', 'manual-image-label')">
+                        </div>
+                    </div>
+                </div>
+            </fieldset>
+            
+            <fieldset>
+                <legend>2. التصميم والشكل</legend>
+                <div style="display: flex; gap: 20px; flex-wrap: wrap;">
+                    <div class="form-group" style="flex: 1; min-width: 200px;">
+                        <label for="video-format-select">قياس الفيديو:</label>
+                        <select id="video-format-select" name="video_format">
+                            <option value="reels" selected>فيديو Reels (عمودي 9:16)</option>
+                            <option value="video">فيديو عادي (أفقي 16:9)</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="flex: 1; min-width: 200px;">
+                        <label for="design-select">نوع التصميم:</label>
+                        <select id="design-select" name="design">
+                            <option value="cinematic">سينمائي</option>
+                            <option value="classic">كلاسيكي</option>
+                        </select>
+                    </div>
+                    <div class="form-group" style="flex: 1; min-width: 200px;">
+                        <label for="template-select">قالب الخبر:</label>
+                        <select id="template-select" name="template">
+                            <option value="1">دليلك في سوريا</option>
+                            <option value="3">دليلك في الأخبار</option>
+                            <option value="4">عاجل||نتائج</option>
+                            <option value="2">دليلك في الرياضة</option>
+                        </select>
+                    </div>
+                </div>
+            </fieldset>
+    
+            <fieldset>
+                <legend>3. الصوت (اختياري)</legend>
+                <div class="switch-container">
+                    <div class="switch-label">
+                        <b>تفعيل قراءة النص (صوت آلي)</b><br>
+                        <span>سيتم تحويل نص الخبر إلى تعليق صوتي تلقائياً.</span>
+                    </div>
+                    <label class="switch">
+                        <input type="checkbox" id="tts-toggle" name="tts_enabled" value="true">
+                        <span class="slider"></span>
+                    </label>
+                </div>
+                 <div class="form-group" style="margin-top: 15px;">
+                    <label for="music-file-input">رفع موسيقى خلفية مخصصة (اختياري):</label>
+                    <label for="music-file-input" class="file-input-label" id="music-file-label">اختر ملف صوتي (MP3, WAV)...</label>
+                    <input type="file" id="music-file-input" name="music_file" accept="audio/*" onchange="updateLabel('music-file-input', 'music-file-label')">
+                </div>
+            </fieldset>
+    
+            <fieldset>
+                <legend>4. فيديوهات إضافية (اختياري)</legend>
+                <div style="display: flex; gap: 20px;">
+                    <div class="form-group" style="flex: 1;">
+                        <label for="intro-input">رفع فيديو مقدمة:</label>
+                        <label for="intro-input" class="file-input-label" id="intro-label">اختر ملف فيديو...</label>
+                        <input type="file" id="intro-input" name="intro_video" accept="video/*" onchange="updateLabel('intro-input', 'intro-label')">
+                    </div>
+                    <div class="form-group" style="flex: 1;">
+                        <label for="outro-input">رفع فيديو خاتمة:</label>
+                        <label for="outro-input" class="file-input-label" id="outro-label">اختر ملف فيديو...</label>
+                        <input type="file" id="outro-input" name="outro_video" accept="video/*" onchange="updateLabel('outro-input', 'outro-label')">
+                    </div>
+                </div>
+            </fieldset>
+        
+            <button type="button" class="btn" id="submit-btn" onclick="generateVideo()">🚀 إنشاء ونشر الفيديو</button>
+        </form>
+        
+        <div id="status-message"></div>
+    </div>
+    
+    <script>
+        const API_URL = '/create-video';
+        const SCRAPE_API_URL = '/scrape-url'; 
+        
+        function showTab(tabId) {
+            document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.tab-button').forEach(btn => btn.classList.remove('active'));
+            document.getElementById(tabId).classList.add('active');
+            event.currentTarget.classList.add('active');
+    
+            const isUrlTab = tabId === 'url-input';
+            document.getElementById('manual-text').value = isUrlTab ? '' : document.getElementById('manual-text').value;
+            document.getElementById('article-url').value = !isUrlTab ? '' : document.getElementById('article-url').value;
+            
+            if (!isUrlTab) {
+                document.getElementById('preview-area').style.display = 'none';
+            }
+        }
+        
+        function updateLabel(inputId, labelId) {
+            const input = document.getElementById(inputId);
+            const label = document.getElementById(labelId);
+            const defaultText = label.getAttribute('data-default-text') || label.textContent;
+            label.setAttribute('data-default-text', defaultText);
+    
+            if (input.files.length > 0) {
+                label.textContent = `تم اختيار: ${input.files[0].name}`;
+                label.style.backgroundColor = '#d4edda';
+                label.style.color = '#155724';
+            } else {
+                label.textContent = defaultText;
+                label.style.backgroundColor = '#e9ecef';
+                label.style.color = '#495057';
+            }
+        }
+    
+        async function fetchPreview() {
+            const urlInput = document.getElementById('article-url');
+            const previewArea = document.getElementById('preview-area');
+            const loader = document.getElementById('preview-loader');
+            const content = document.getElementById('preview-content');
+            const errorMsg = document.getElementById('preview-error');
+            const img = document.getElementById('preview-image');
+            const title = document.getElementById('preview-title');
+    
+            const url = urlInput.value;
+            if (!url || !url.startsWith('http')) {
+                previewArea.style.display = 'none';
+                return;
+            }
+    
+            previewArea.style.display = 'flex';
+            previewArea.classList.add('loading');
+            loader.style.display = 'block';
+            content.style.display = 'none';
+            errorMsg.style.display = 'none';
+    
+            try {
+                const response = await fetch(SCRAPE_API_URL, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url: url })
+                });
+    
+                const data = await response.json();
+                if (!response.ok) {
+                    throw new Error(data.error || 'فشل في جلب البيانات من الرابط');
+                }
+                
+                img.src = data.imageUrl;
+                title.textContent = data.title;
+                
+                previewArea.classList.remove('loading');
+                loader.style.display = 'none';
+                content.style.display = 'flex';
+    
+            } catch (error) {
+                loader.style.display = 'none';
+                content.style.display = 'none';
+                errorMsg.textContent = `خطأ: ${error.message}`;
+                errorMsg.style.display = 'block';
+            }
+        }
+    
+        async function generateVideo() {
+            const submitBtn = document.getElementById('submit-btn');
+            const statusMessage = document.getElementById('status-message');
+            const form = document.getElementById('video-form');
+            const formData = new FormData(form);
+    
+            if (!formData.get('url') && !formData.get('text')) {
+                alert('يرجى إدخال رابط مقال أو نص يدوي.');
+                return;
+            }
+    
+            submitBtn.disabled = true;
+            submitBtn.innerText = 'جاري المعالجة... يرجى الانتظار';
+            statusMessage.style.display = 'block';
+            statusMessage.className = 'status-processing';
+            statusMessage.innerText = 'بدأت عملية إنشاء الفيديو. قد تستغرق هذه العملية عدة دقائق. يرجى عدم إغلاق الصفحة...';
+            document.getElementById('preview-area').style.display = 'none';
+    
+            try {
+                const response = await fetch(API_URL, {
+                    method: 'POST',
+                    body: formData, 
+                });
+    
+                const result = await response.json();
+                if (response.ok) {
+                    statusMessage.className = 'status-success';
+                    statusMessage.innerText = result.message;
+                } else {
+                    throw new Error(result.message || 'حدث خطأ غير متوقع في الخادم.');
+                }
+            } catch (error) {
+                statusMessage.className = 'status-error';
+                statusMessage.innerText = `فشل! ${error.message}`;
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.innerText = '🚀 إنشاء ونشر الفيديو';
+            }
+        }
+    </script>
+</body>
+</html>
