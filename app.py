@@ -1,7 +1,7 @@
 # ==============================================================================
-#     أداة الفيديو الإخباري كخدمة ويب (API) - إصدار 9.1 (مُصحح)
-#     - إصلاح خطأ "I/O operation on closed file" عن طريق حفظ الملفات
-#       في الطلب الرئيسي قبل بدء المعالجة في الخلفية.
+#     أداة الفيديو الإخباري كخدمة ويب (API) - إصدار 9.2 (حل نهائي)
+#     - إعادة هيكلة كاملة لمنطق معالجة الطلبات لضمان عدم تمرير كائنات
+#       الطلب إلى الـ thread الخلفي، مما يحل مشكلة I/O بشكل جذري.
 # ==============================================================================
 import os
 import random
@@ -237,26 +237,25 @@ def send_video_to_telegram(video_path, thumb_path, caption, hashtag):
     except Exception as e: print(f"!! خطأ في الإرسال إلى تليجرام: {e}")
 
 # ==============================================================================
-#                          المنطق الرئيسي للـ API (مُعدل)
+#                      المنطق الرئيسي للـ API (إعادة هيكلة)
 # ==============================================================================
-def process_video_request(form_data, saved_file_paths):
-    # ** التعديل: الملفات المحفوظة مسبقاً تُضاف الآن إلى قائمة التنظيف
-    temp_files_to_clean = list(saved_file_paths.values())
+def process_video_request(payload):
+    # ** التعديل: الدالة الآن تستقبل "حزمة بيانات" بسيطة وليس كائنات الطلب
+    temp_files_to_clean = list(payload.get('saved_file_paths', {}).values())
     try:
-        source_url = form_data.get('url')
-        manual_text = form_data.get('text')
-        template_choice = form_data.get('template', '1')
-        design_type = form_data.get('design', 'classic')
-        video_format = form_data.get('video_format', 'reels')
-        tts_enabled = form_data.get('tts_enabled') == 'true'
+        source_url = payload.get('url')
+        manual_text = payload.get('text')
+        template_choice = payload.get('template', '1')
+        design_type = payload.get('design', 'classic')
+        video_format = payload.get('video_format', 'reels')
+        tts_enabled = payload.get('tts_enabled', False)
 
         W, H = VIDEO_DIMENSIONS[video_format]['size']
         selected_template = NEWS_TEMPLATES[template_choice]
         
-        # ** التعديل: الحصول على مسارات الملفات من القاموس المُمرر
-        intro_path = saved_file_paths.get('intro_video')
-        outro_path = saved_file_paths.get('outro_video')
-        music_path = saved_file_paths.get('music_file')
+        intro_path = payload.get('saved_file_paths', {}).get('intro_video')
+        outro_path = payload.get('saved_file_paths', {}).get('outro_video')
+        music_path = payload.get('saved_file_paths', {}).get('music_file')
         
         data = {}
         if source_url:
@@ -296,29 +295,35 @@ def process_video_request(form_data, saved_file_paths):
                 try: os.remove(f)
                 except Exception as e: print(f"  - لم يتمكن من حذف {f}: {e}")
 
-# ** التعديل الرئيسي هنا في معالج الطلب **
 @app.route('/create-video', methods=['POST'])
 def handle_create_video():
-    # تحويل بيانات النموذج إلى قاموس عادي
-    form_data = request.form.to_dict()
-    saved_file_paths = {}
+    # الخطوة 1: إنشاء "حزمة عمل" (payload) تحتوي على بيانات بسيطة
+    payload = {
+        'form_data': request.form.to_dict(),
+        'saved_file_paths': {}
+    }
 
-    # الخطوة 1: حفظ أي ملفات مرفوعة فوراً في الطلب الرئيسي
+    # الخطوة 2: حفظ أي ملفات مرفوعة فوراً والحصول على مساراتها
     for key in ['intro_video', 'outro_video', 'music_file']:
         if key in request.files:
             file = request.files[key]
-            # التأكد من أن المستخدم رفع ملفاً بالفعل وليس حقلاً فارغاً
             if file and file.filename:
                 filename = secure_filename(f"{key}_{random.randint(1000,9999)}_{file.filename}")
                 path = os.path.join(app.config['UPLOAD_FOLDER'], filename)
                 file.save(path)
-                saved_file_paths[key] = path
+                payload['saved_file_paths'][key] = path
 
-    # الخطوة 2: بدء العملية الخلفية وتمرير البيانات والمسارات المحفوظة
-    thread = threading.Thread(target=process_video_request, args=(form_data, saved_file_paths))
+    # ** دمج بيانات النموذج مع حزمة العمل الرئيسية **
+    payload.update(payload.pop('form_data'))
+    # تحويل tts_enabled إلى boolean
+    payload['tts_enabled'] = payload.get('tts_enabled') == 'true'
+
+
+    # الخطوة 3: بدء العملية الخلفية وتمرير "حزمة العمل" فقط
+    thread = threading.Thread(target=process_video_request, args=(payload,))
     thread.start()
     
-    # الخطوة 3: إرجاع استجابة فورية
+    # الخطوة 4: إرجاع استجابة فورية
     return jsonify({
         "status": "processing",
         "message": "تم استلام طلبك بنجاح. سيتم إنشاء الفيديو ونشره في الخلفية."
