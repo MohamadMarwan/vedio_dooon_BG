@@ -1,0 +1,9 @@
+Flask
+requests
+beautifulsoup4
+Pillow
+arabic_reshaper
+python-bidi
+opencv-python
+numpy
+ffmpeg-python
